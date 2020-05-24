@@ -62,6 +62,7 @@ CREATE TABLE kupac_racun (
     vrsta_placanja VARCHAR(32) NOT NULL,
     iskoristeni_bodovi INTEGER NOT NULL,
     PRIMARY KEY (id_kupac_racun),
+    FOREIGN KEY (id_vrsta_narudzbe) REFERENCES vrsta_narudzbe(id_vrsta_narudzbe),
     FOREIGN KEY (id_kupac) REFERENCES kupac(id_kupac),
     FOREIGN KEY (id_zaposlenik) REFERENCES zaposlenik(id_zaposlenik),
     CHECK (iskoristeni_bodovi = 0 OR iskoristeni_bodovi >= 10)
@@ -121,14 +122,15 @@ CREATE TABLE dobavljac_stavka_racun (
     FOREIGN KEY (id_artikl) REFERENCES artikl(id_artikl)
 );
 
-CREATE TABLE pregled_popravak_racunala (
-	id_pregled INTEGER NOT NULL AUTO_INCREMENT,
-    kupac_racun INTEGER NOT NULL,
+CREATE TABLE servis (
+	id_servis INTEGER NOT NULL AUTO_INCREMENT,
+    id_kupac_racun INTEGER NOT NULL,
     id_artikl INTEGER NOT NULL,
     kolicina INTEGER NOT NULL,
     datum DATETIME NOT NULL,
-    PRIMARY KEY (id_pregled),
-    FOREIGN KEY (id_artikl) REFERENCES artikl(id_artikl)
+    PRIMARY KEY (id_servis),
+    FOREIGN KEY (id_artikl) REFERENCES artikl(id_artikl),
+    FOREIGN KEY (id_kupac_racun) REFERENCES kupac_racun(id_kupac_racun)
 );
 
 CREATE TABLE akcije_snizenja (
@@ -149,14 +151,7 @@ CREATE TABLE bodovi (
     FOREIGN KEY (id_kupac) REFERENCES kupac(id_kupac)
 );
 
--- Relacije koje bi trebali implementirati:
--- 1. ukupna_cijena kod kupac_racun
--- Dobiti kod kupac_stavka_racun gdje treba uzet u obzir sniženje artikla ako ga ima i smanjiti mu cijenu pa pomnožit sa količinom
--- Te oduzeti od iskorištenih bodova (svaki bod = 1 kuna) npr. stavka_racun_1(((monitor od 50kn - 10%*50kn) * kolicina) - iskorišteni_bodovi) + stavka_racun_2(..) + ...
--- 2. Izracunat dobivene_bodove za kupca, npr. svaki artikl ima broj bodova koji moze dati kupcu (od 0 do 100) ako se kupi npr. 2 laptopa i jedan vanjski disk to je 
--- (45*2 + 24) i te bodove nadodat u bodovi, također treba i oduzet iskorištene bodove
--- 3. oduzet od lokacije_artikla kolicinu koja je kupljena/prodana i dodati kupljene artikle od dobavljaca
--- 4. ukupna_cijena kod dobavljac_racun
+
 
 
 INSERT INTO artikl VALUES
@@ -305,7 +300,8 @@ INSERT INTO vrsta_narudzbe VALUES
     ( 30, 'ONLINE', 15);
 
 INSERT INTO kupac_racun VALUES 
-	( 1, 1, 22, STR_TO_DATE('08.07.2019.', '%d.%m.%Y.'), 5, 'Gotovina', 13),( 2, 2, 4, STR_TO_DATE('11.08.2019.', '%d.%m.%Y.'), 8, 'MasterCard', 58),
+	( 1, 1, 22, STR_TO_DATE('08.07.2019.', '%d.%m.%Y.'), 5, 'Gotovina', 13),
+    ( 2, 2, 4, STR_TO_DATE('11.08.2019.', '%d.%m.%Y.'), 8, 'MasterCard', 58),
 	( 3, 3, 1, STR_TO_DATE('07.11.2019.', '%d.%m.%Y.'), 10, 'Visa', 15),
 	( 4, 4, 2, STR_TO_DATE('06.01.2020.', '%d.%m.%Y.'), 27, 'PayPal', 31),
 	( 5, 5, 13, STR_TO_DATE('24.01.2020.', '%d.%m.%Y.'), 11, 'Diners', 32),
@@ -540,7 +536,7 @@ INSERT INTO dobavljac_stavka_racun VALUES
 	( 59, 15, 24, 4, 11),
 	( 60, 15, 29, 19, 4);
     
-INSERT INTO pregled_popravak_racunala VALUES
+INSERT INTO servis VALUES
 	( 1, 4, 16, 1,  STR_TO_DATE('16.03.2020.', '%d.%m.%Y.')),
 	( 2, 7, 10, 1,  STR_TO_DATE('30.08.2019.', '%d.%m.%Y.')),
 	( 3, 8, 29, 2,  STR_TO_DATE('05.11.2019.', '%d.%m.%Y.')),
@@ -607,6 +603,8 @@ INSERT INTO bodovi VALUES
 	(29, 29, 16),
 	(30, 30, 55);
     
+    -- UPITI
+    
     -- prikaži koliko je svaki kupac (ime i prezime) utrošio novaca (ukupno) uzevši u obzir popuste/akcije i iskorištene bodove
 
 SELECT id_kupac,CAST(ukupno AS DECIMAL(10,2)) AS sveukupno FROM 
@@ -661,6 +659,8 @@ FROM bodovi
 NATURAL JOIN dobiveni_bodovi
 NATURAL JOIN kupac_racun;
 
+-- Ažuriranje artikla na lokacijama
+
 CREATE VIEW smanjeni_artikli AS
 SELECT id_artikl, id_poslovnica, SUM(kolicina) AS smanjenje
 FROM kupac_racun
@@ -684,4 +684,39 @@ lokacija_artikla
 NATURAL LEFT JOIN
 smanjeni_artikli
 NATURAL LEFT JOIN
-dodani_artikli) AS pom
+dodani_artikli) AS pom;
+
+
+-- Koliko je svaki zaposlenik izdao racuna kupac
+
+SELECT id_zaposlenik, ime, prezime, COUNT(id_kupac)
+FROM kupac_racun NATURAL JOIN zaposlenik
+GROUP BY id_zaposlenik;
+
+-- Koje je najpopularnija vrsta placanja
+SELECT vrsta_placanja, MAX(broj) 
+FROM
+    (SELECT vrsta_placanja,COUNT(*) AS broj
+    FROM kupac_racun
+    GROUP BY vrsta_placanja) AS placanja;
+
+-- Koji su artikli na servisu od kojih kupaca i do kada
+
+SELECT id_servis, ime, prezime, naziv, kolicina, datum
+FROM servis 
+NATURAL JOIN
+    (SELECT id_kupac_racun, id_kupac, ime, prezime, id_artikl, naziv FROM
+    kupac_racun 
+    NATURAL JOIN 
+    kupac_stavka_racun
+    NATURAL JOIN 
+    artikl
+    NATURAL JOIN 
+    kupac) AS id;
+
+-- Koji kupac je na koji nacin i od kuda kupio proizvode
+SELECT id_kupac, ime, prezime, vrsta, id_poslovnica, adresa
+FROM kupac_racun
+NATURAL JOIN vrsta_narudzbe
+NATURAL JOIN poslovnica
+NATURAL JOIN (SELECT id_kupac,ime,prezime FROM kupac) AS kupac
